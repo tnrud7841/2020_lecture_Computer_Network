@@ -1,0 +1,208 @@
+import socket
+import time
+from random import *
+from multiprocessing import Pipe
+from threading import Thread
+
+ADDR = ('127.0.0.1', 10000)
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server_socket.bind(ADDR)
+server_socket.listen()
+client_socket, client_addr = server_socket.accept()
+
+def Application_layer(up, down):
+    msg = down.recv()
+    print("Application : data 얻음!\n")
+    print("*************************")
+    print('Recieve message :', ''.join(msg))
+    print("*************************")
+    a = True
+    down.send(a)
+
+def Transport_layer(up, down):
+    msg = down.recv()
+    print("\nTransport : Recieve a message - ",msg)
+    print("Transport : Send a message - ", msg,'\n')
+    up.send(msg)
+    if(up.recv()):
+        print("\nTransport : Send a ACK message - ", msg,'\n')
+        msg = (bin(65))[2:] + (bin(67))[2:] + (bin(75))[2:]
+        down.send(msg)
+
+def Network_layer(up, down):
+    msg = down.recv()
+    print("\nNetwork : Recieve a message - ",msg)
+    print("Network : Send a message - ",msg)
+    up.send(msg)
+    msg = up.recv()
+    print("\nNetwork : Recieve a ACK message - ",msg)
+    down.send(msg)
+    print("Network : Send a ACK message - ", msg,'\n')
+
+def Bit_stuffing(data):
+    data = list(data)
+    count = 0
+    for i in range(0,len(data)):
+        if(data[i]=='1'):
+            count+=1
+        else:
+            count = 0 
+        if(count==5):
+            data[i]= '10'
+            count = 0
+    return data
+
+def Bit_unstuffing(data):
+    data = list(data)
+    re = []
+    count = 0
+    for i in range(0,len(data)):
+        if(data[i]=='1'):
+            count+=1
+            re.append(data[i])
+        else:
+            if(count != 5):
+                count = 0 
+                re.append(data[i])
+            else:
+                count = 0
+                continue
+    return re
+
+def Persistent_1():
+    while True:
+        channel = 0
+        if(channel==1):
+            print("channel busy\n")
+            continue
+        else:
+            print("channel idle")
+            break
+
+def Work(collision,success):
+    if(collision==0):
+        success=1
+    return success
+
+def Attemp(k,kmax,success):
+    Tp = 0.1
+    abort=0
+    while True:
+        collision = 0
+        success = Work(collision,success)
+        if(success==0 and collision==0):
+            print("working...\n")
+            continue
+        else:
+            if(collision==0):
+                print("!success!")
+                break
+            else:
+                print("collision detected\n")
+                print("send a jamming signal\n")
+                if(k>kmax):
+                    abort = 1
+                    print("!Abort!\n")
+                    break
+                else:
+                    R = Tp * randint(0,pow(2,k)-1)
+                    print("wait TB time\n")
+                    print("----------------k  = ",k,"----------------\n")
+                    time.sleep(R)
+                    break
+    return success, abort
+    
+def CSMACD_simulate(kmax):
+    k=0
+    success=0
+    while True:
+        Persistent_1()
+        k=k+1
+        success,abort = Attemp(k,kmax,success)
+        if success==1 or abort==1:
+            break
+
+
+def Datalink_layer(up, down):
+    msg = down.recv()
+    msg = Bit_unstuffing(msg)
+    print("Datalink : Recieve a message - ",msg)
+    print("Datalink : Send a message - ",msg)
+    up.send(msg)
+
+    msg = up.recv()
+    msg = Bit_stuffing(msg)
+    print("\nDatalink : Receive a ACK message - ",msg)
+    CSMACD_simulate(kmax=5)
+    print("Datalink : Send a ACK message - ",msg,"\n")
+    down.send(msg)
+    
+
+def MLT_3(bit_stream):
+    n = len(bit_stream)
+    result = [] * n
+    nonzero = 1
+    #At the beginning
+    if "0" in bit_stream[0]:
+        result.append(0) 
+        if (bit_stream[0]=='0' and bit_stream[1]=='1'): result.append(1)
+    else: result.append(1)
+    #On-running
+    for i in range(0,n):
+        i=i+1
+        if(bit_stream[0]=='0' and bit_stream[1]=='1'): i=i+1
+        if i == n: break
+        elif "0" in bit_stream[i]: result.append(result[i-1]) 
+        else:
+            if(result[i-1]==0):
+                nonzero = -nonzero
+                result.append(nonzero)    
+            else: result.append(0)
+    #change(1 -> +, -1 -> -)
+    b = [] * n
+    for i in range(0,len(result)):
+        if result[i] == 1: b.append(chr(43))
+        elif result[i] == -1: b.append(chr(45))
+        else: b.append(0)
+    
+    return "".join(map(str, b))
+
+def InvMLT_3(bit_stream):
+    n = len(bit_stream)
+    result = [] * n
+    #At the beginning
+    if "+" in bit_stream[0]:
+        result.append(1) 
+    else: result.append(0)
+    #On-running
+    for i in range(1,n):
+        if(bit_stream[i] == bit_stream[i-1]):
+            result.append(0)
+        else:
+            result.append(1)
+    result = "".join(map(str, result))
+    return ''.join(result)
+
+def Physical_layer(up, down):
+    msg = down.recv(1024).decode()
+    print("Physical : Recieve a message - ",msg)
+    msg = InvMLT_3(msg)
+    print("Physical : Send a message - ",msg,"\n")
+    up.send(msg)
+    msg = up.recv()
+    print("Physical : Recieve a ACK message - ",msg)
+    msg = MLT_3(msg)
+    down.send(msg.encode())
+    print("Physical : Send a ACK message - ",msg,"\n")
+
+APP_TRANS, TRANS_APP = Pipe()
+TRANS_NWK, NWK_TRANS = Pipe()
+NWK_DATA, DATA_NWK = Pipe()
+DATA_PHY, PHY_DATA = Pipe()
+
+Thread(target=Application_layer, args=(None, APP_TRANS)).start()
+Thread(target=Transport_layer, args=(TRANS_APP, TRANS_NWK)).start()
+Thread(target=Network_layer, args=(NWK_TRANS, NWK_DATA)).start()
+Thread(target=Datalink_layer, args=(DATA_NWK, DATA_PHY)).start()
+Thread(target=Physical_layer, args=(PHY_DATA, client_socket)).start()
